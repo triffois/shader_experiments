@@ -76,7 +76,7 @@ Intersection reflectionPlaneIntersection(Ray ray) {
 
 vec3 sphere_color(Ray ray, Intersection intersection) {
   vec3 ambient_color = vec3(0.1);
-  vec3 light_color = vec3(1.5, 0.5, 0.5);
+  vec3 light_color = vec3(1.5, 1.5, 1.0);
   vec3 diffuse_color = vec3(0.1, 0.1, 1.0);
   vec3 specular_color = vec3(1.0);
 
@@ -89,8 +89,8 @@ vec3 sphere_color(Ray ray, Intersection intersection) {
 
 vec3 plane_color(Ray ray, Intersection intersection, Sphere sphere) {
   vec3 ambient_color = vec3(0.1);
-  vec3 light_color = vec3(1.5, 0.5, 0.5);
-  vec3 diffuse_color = vec3(0.1, 0.1, 1.0);
+  vec3 light_color = vec3(1.5, 1.5, 1.0);
+  vec3 diffuse_color = vec3(1, 1, 1);
   vec3 specular_color = vec3(1.0);
 
   vec3 light_dir = normalize(vec3(1.0, 1.0, -1.0));
@@ -128,7 +128,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   Intersection ground_plane_intersection = groundPlaneIntersection(ray);
   Intersection reflection_plane_intersection = reflectionPlaneIntersection(ray);
 
-  vec3 reflection_multiplier = vec3(0.2, 1, 0.5);
+  vec3 reflection_multiplier = vec3(0.7, 0.8, 0.7);
   vec3 reflection_accumulator = vec3(1);
 
   while (reflection_plane_intersection.distance > 0.0 &&
