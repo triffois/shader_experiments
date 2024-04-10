@@ -65,8 +65,8 @@ bool intersectAABB(Ray ray, vec3 boxMin, vec3 boxMax) {
   vec3 t1s = (boxMax - ray.origin) * invDir;
   vec3 tsmaller = min(t0s, t1s);
   vec3 tbigger = max(t0s, t1s);
-  float tmin = max(max(tsmaller.x, tsmaller.y), tsmaller.z);
-  float tmax = min(min(tbigger.x, tbigger.y), tbigger.z);
+  float tmin = min(min(tsmaller.x, tsmaller.y), tsmaller.z);
+  float tmax = max(max(tbigger.x, tbigger.y), tbigger.z);
   return tmax >= tmin;
 };
 
