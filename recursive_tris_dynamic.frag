@@ -1,9 +1,20 @@
-#version 330 core
+#version 430 core
 out vec4 FragColor;
 in vec4 gl_FragCoord;
 uniform vec2 iResolution;
 uniform float iTime;
 uniform int iFrame;
+uniform int triangle_count;
+
+struct Triangle {
+  vec4 v0;
+  vec4 v1;
+  vec4 v2;
+  vec4 min;
+  vec4 max;
+};
+
+layout(std430, binding = 3) buffer triangles_ssbo { Triangle triangles[]; };
 
 const int MAX_BOUNCES = 4;
 const float FOCAL_LENGTH = 1.0;
@@ -38,28 +49,19 @@ Intersection closerIntersection(Intersection a, Intersection b) {
   return a.distance < b.distance ? a : b;
 }
 
-struct Triangle {
-  vec3 v0;
-  vec3 v1;
-  vec3 v2;
-  MaterialProperties material;
-};
-
 struct Light {
   vec3 position;
   vec3 color;
 };
 
 struct Scene {
-  Triangle triangles[MAX_ARRAY_SIZE];
-  int triangle_count;
   Light lights[MAX_ARRAY_SIZE];
   int light_count;
 };
 
 Intersection intersectTriangle(Ray ray, Triangle triangle) {
-  vec3 edge1 = triangle.v1 - triangle.v0;
-  vec3 edge2 = triangle.v2 - triangle.v0;
+  vec3 edge1 = triangle.v1.xyz - triangle.v0.xyz;
+  vec3 edge2 = triangle.v2.xyz - triangle.v0.xyz;
 
   vec3 normal = normalize(cross(edge1, edge2));
   if (dot(normal, ray.direction) > 0) {
@@ -78,7 +80,7 @@ Intersection intersectTriangle(Ray ray, Triangle triangle) {
   }
 
   float f = 1.0 / a;
-  vec3 s = ray.origin - triangle.v0;
+  vec3 s = ray.origin - triangle.v0.xyz;
   float u = f * dot(s, h);
   if (u < 0.0 || u > 1.0) {
     return Intersection(false, 0.0, vec3(0), vec3(0),
@@ -96,16 +98,16 @@ Intersection intersectTriangle(Ray ray, Triangle triangle) {
                         MaterialProperties(vec3(0), vec3(0)));
   }
   return Intersection(true, t, ray.origin + t * ray.direction, normal,
-                      triangle.material);
+                      MaterialProperties(vec3(1), vec3(0)));
 }
 
 Intersection intersectScene(Ray ray, Scene scene) {
   Intersection closestIntersection = Intersection(
       false, 0.0, vec3(0), vec3(0), MaterialProperties(vec3(0), vec3(0)));
 
-  for (int i = 0; i < scene.triangle_count; i++) {
+  for (int i = 0; i < triangle_count; i++) {
     closestIntersection = closerIntersection(
-        closestIntersection, intersectTriangle(ray, scene.triangles[i]));
+        closestIntersection, intersectTriangle(ray, triangles[i]));
   }
 
   return closestIntersection;
@@ -150,7 +152,7 @@ NextCast castRay(Ray ray, Scene scene) {
 Ray cameraRay(vec2 uv, vec2 resolution, vec3 origin) {
   vec3 ray_origin = vec3(0);
   vec2 sensor_size = vec2(resolution.x / resolution.y, 1);
-  vec3 point_on_sensor = vec3((uv - 0.5) * sensor_size, FOCAL_LENGTH);
+  vec3 point_on_sensor = vec3((0.5 - uv) * sensor_size, -FOCAL_LENGTH);
   return Ray(origin, normalize(point_on_sensor - ray_origin));
 }
 
@@ -175,25 +177,13 @@ vec3 renderRay(Ray ray, Scene scene) {
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   vec2 uv = fragCoord.xy / iResolution.xy;
 
-  Triangle[MAX_ARRAY_SIZE] triangles;
-  triangles[0] = Triangle(vec3(-1, -1, 0), vec3(0, 1, 0), vec3(0, 0, -1),
-                          MaterialProperties(vec3(0, 0, 1), vec3(0)));
-  triangles[1] = Triangle(vec3(0, 1, 0), vec3(1, -1, 0), vec3(0, 0, -1),
-                          MaterialProperties(vec3(0, 0, 1), vec3(0)));
-  triangles[2] = Triangle(vec3(0.25, 1.25, -0.5), vec3(-0.25, 1.25, -0.5),
-                          vec3(0, 1.25, -0.75),
-                          MaterialProperties(vec3(1, 0, 0), vec3(0)));
-  triangles[3] =
-      Triangle(vec3(-100, -1, -100), vec3(100, -1, -100), vec3(0, -1, 100),
-               MaterialProperties(vec3(0.5, 0.5, 0.5), vec3(0)));
-
   Light[MAX_ARRAY_SIZE] lights;
-  lights[0] = Light(vec3(5 * sin(iTime), 5, -5), vec3(100.0));
-  lights[1] = Light(vec3(0, -0.5, -2), vec3(5.0, 2.5, 2.5));
+  lights[0] = Light(vec3(5 * sin(iTime), 5, 5), vec3(25.0));
 
-  Scene scene = Scene(triangles, 4, lights, 2);
+  Scene scene = Scene(lights, 1);
 
-  Ray ray = cameraRay(uv, iResolution.xy, vec3(0, 0, -5));
+  Ray ray = cameraRay(uv, iResolution.xy,
+                      vec3(2 * sin(iTime / 10), 2 * cos(iTime / 10), 5));
   vec3 col = renderRay(ray, scene);
 
   fragColor = vec4(col, 1.0);

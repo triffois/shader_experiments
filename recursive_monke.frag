@@ -7,6 +7,7 @@ uniform int iFrame;
 const int MAX_BOUNCES = 4;
 const float FOCAL_LENGTH = 1.0;
 const int MAX_ARRAY_SIZE = 967;
+const float WEIGHT_THRESHOLD = 0.01;
 struct Ray {
   vec3 origin;
   vec3 direction;
@@ -162,6 +163,9 @@ vec3 renderRay(Ray ray, Scene scene) {
     accumulated_color += accumulated_weight * next_cast.accumulated_color;
     accumulated_weight *= next_cast.accumulated_weight;
     ray = next_cast.next_ray;
+    if (length(accumulated_weight) < WEIGHT_THRESHOLD) {
+      return accumulated_color;
+    }
   }
   return accumulated_color;
 }
