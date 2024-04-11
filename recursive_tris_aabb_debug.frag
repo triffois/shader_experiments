@@ -147,7 +147,7 @@ Intersection intersectScene(Ray ray) {
 Ray cameraRay(vec2 uv, vec2 resolution, vec3 origin) {
   vec3 ray_origin = vec3(0);
   vec2 sensor_size = vec2(resolution.x / resolution.y, 1);
-  vec3 point_on_sensor = vec3((0.5 - uv) * sensor_size, -FOCAL_LENGTH);
+  vec3 point_on_sensor = vec3((uv - 0.5) * sensor_size, -FOCAL_LENGTH);
   return Ray(origin, normalize(point_on_sensor - ray_origin));
 }
 
@@ -156,7 +156,8 @@ vec3 renderRay(Ray ray) {
   if (!intersection.happened) {
     return vec3(0);
   }
-  return vec3(1, float(intersection.n_bbox) / 96.0, 0);
+  return vec3(1, float(intersection.n_bbox) / 128.0,
+              float(triangle_count) / 64.0);
 }
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {

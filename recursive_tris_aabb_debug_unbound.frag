@@ -30,7 +30,7 @@ layout(std430, binding = 4) buffer boxes_ssbo { Box boxes[]; };
 
 const int MAX_BOUNCES = 4;
 const float FOCAL_LENGTH = 1.0;
-const int MAX_ARRAY_SIZE = 40;
+const int MAX_ARRAY_SIZE = 25;
 const float WEIGHT_THRESHOLD = 0.01;
 
 struct Ray {
@@ -38,17 +38,10 @@ struct Ray {
   vec3 direction;
 };
 
-struct MaterialProperties {
-  vec3 color;
-  vec3 reflectivity;
-};
-
 struct Intersection {
   bool happened;
   float distance;
-  vec3 position;
-  vec3 normal;
-  MaterialProperties material;
+  int n_bbox;
 };
 
 Intersection closerIntersection(Intersection a, Intersection b) {
@@ -61,16 +54,6 @@ Intersection closerIntersection(Intersection a, Intersection b) {
   return a.distance < b.distance ? a : b;
 }
 
-struct Light {
-  vec3 position;
-  vec3 color;
-};
-
-struct Scene {
-  Light lights[MAX_ARRAY_SIZE];
-  int light_count;
-};
-
 bool intersectAABB(Ray ray, vec3 boxMin, vec3 boxMax) {
   vec3 invDir = 1.0 / ray.direction;
   vec3 t0s = (boxMin - ray.origin) * invDir;
@@ -82,7 +65,7 @@ bool intersectAABB(Ray ray, vec3 boxMin, vec3 boxMax) {
   return tmax >= tmin;
 };
 
-Intersection intersectTriangle(Ray ray, Triangle triangle) {
+Intersection intersectTriangle(Ray ray, Triangle triangle, int n_bbox) {
   vec3 edge1 = triangle.v1.xyz - triangle.v0.xyz;
   vec3 edge2 = triangle.v2.xyz - triangle.v0.xyz;
 
@@ -98,40 +81,36 @@ Intersection intersectTriangle(Ray ray, Triangle triangle) {
   vec3 h = cross(ray.direction, edge2);
   float a = dot(edge1, h);
   if (a > -0.00001 && a < 0.00001) {
-    return Intersection(false, 0.0, vec3(0), vec3(0),
-                        MaterialProperties(vec3(0), vec3(0)));
+    return Intersection(false, 0.0, n_bbox);
   }
 
   float f = 1.0 / a;
   vec3 s = ray.origin - triangle.v0.xyz;
   float u = f * dot(s, h);
   if (u < 0.0 || u > 1.0) {
-    return Intersection(false, 0.0, vec3(0), vec3(0),
-                        MaterialProperties(vec3(0), vec3(0)));
+    return Intersection(false, 0.0, n_bbox);
   }
   vec3 q = cross(s, edge1);
   float v = f * dot(ray.direction, q);
   if (v < 0.0 || u + v > 1.0) {
-    return Intersection(false, 0.0, vec3(0), vec3(0),
-                        MaterialProperties(vec3(0), vec3(0)));
+    return Intersection(false, 0.0, n_bbox);
   }
   float t = f * dot(edge2, q);
   if (t < 0.0) {
-    return Intersection(false, 0.0, vec3(0), vec3(0),
-                        MaterialProperties(vec3(0), vec3(0)));
+    return Intersection(false, 0.0, n_bbox);
   }
-  return Intersection(true, t, ray.origin + t * ray.direction, normal,
-                      MaterialProperties(vec3(1), vec3(0)));
+  return Intersection(true, t, n_bbox);
 }
 
-Intersection intersectScene(Ray ray, Scene scene) {
-  Intersection closestIntersection = Intersection(
-      false, 0.0, vec3(0), vec3(0), MaterialProperties(vec3(0), vec3(0)));
+Intersection intersectScene(Ray ray) {
+  Intersection closestIntersection = Intersection(false, 0.0, 0);
 
   // Create a stack for the boxes as IDs - we need to check
   int stack[MAX_ARRAY_SIZE];
   stack[0] = root_id;
   int stack_size = 1;
+
+  int n_bboxes = 0;
 
   while (stack_size > 0) {
     // Pop
@@ -142,12 +121,13 @@ Intersection intersectScene(Ray ray, Scene scene) {
     if (!intersectAABB(ray, box.min.xyz, box.max.xyz)) {
       continue;
     }
+    n_bboxes++;
 
     if (box.left_id == -1 || (stack_size + 1) >= MAX_ARRAY_SIZE) {
       // Iterate over triangles
       for (int i = box.start; i < box.end; i++) {
         Triangle triangle = triangles[i];
-        Intersection intersection = intersectTriangle(ray, triangle);
+        Intersection intersection = intersectTriangle(ray, triangle, 0);
         closestIntersection =
             closerIntersection(closestIntersection, intersection);
       }
@@ -160,43 +140,8 @@ Intersection intersectScene(Ray ray, Scene scene) {
     }
   }
 
+  closestIntersection.n_bbox = n_bboxes;
   return closestIntersection;
-}
-
-struct NextCast {
-  bool happened;
-  vec3 accumulated_color;
-  vec3 accumulated_weight;
-  Ray next_ray;
-};
-
-NextCast castRay(Ray ray, Scene scene) {
-  Intersection intersection = intersectScene(ray, scene);
-  if (!intersection.happened) {
-    return NextCast(false, vec3(0), vec3(0), Ray(vec3(0), vec3(0)));
-  }
-
-  vec3 accumulated_intensity = vec3(0);
-  for (int i = 0; i < scene.light_count; i++) {
-    vec3 light_direction =
-        normalize(scene.lights[i].position - intersection.position);
-    float light_distance =
-        length(scene.lights[i].position - intersection.position);
-    Ray shadow_ray = Ray(intersection.position + 0.001 * intersection.normal,
-                         light_direction);
-    Intersection shadow_intersection = intersectScene(shadow_ray, scene);
-    if (!shadow_intersection.happened ||
-        shadow_intersection.distance > light_distance) {
-      float diffuse = max(0.0, dot(intersection.normal, light_direction));
-      accumulated_intensity +=
-          diffuse * scene.lights[i].color / light_distance / light_distance;
-    }
-  }
-
-  return NextCast(
-      true, accumulated_intensity * intersection.material.color,
-      intersection.material.reflectivity,
-      Ray(intersection.position, reflect(ray.direction, intersection.normal)));
 }
 
 Ray cameraRay(vec2 uv, vec2 resolution, vec3 origin) {
@@ -206,35 +151,22 @@ Ray cameraRay(vec2 uv, vec2 resolution, vec3 origin) {
   return Ray(origin, normalize(point_on_sensor - ray_origin));
 }
 
-vec3 renderRay(Ray ray, Scene scene) {
-  vec3 accumulated_color = vec3(0);
-  vec3 accumulated_weight = vec3(1);
-  for (int i = 0; i < MAX_BOUNCES; i++) {
-    NextCast next_cast = castRay(ray, scene);
-    if (!next_cast.happened) {
-      return accumulated_color;
-    }
-    accumulated_color += accumulated_weight * next_cast.accumulated_color;
-    accumulated_weight *= next_cast.accumulated_weight;
-    ray = next_cast.next_ray;
-    if (dot(accumulated_weight, vec3(1)) < WEIGHT_THRESHOLD) {
-      return accumulated_color;
-    }
+vec3 renderRay(Ray ray) {
+  Intersection intersection = intersectScene(ray);
+  if (!intersection.happened) {
+    return vec3(0, float(intersection.n_bbox) / 192.0,
+                float(intersection.n_bbox) / 48.0);
   }
-  return accumulated_color;
+  return vec3(1, float(intersection.n_bbox) / 192.0,
+              float(intersection.n_bbox) / 48.0);
 }
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   vec2 uv = fragCoord.xy / iResolution.xy;
 
-  Light[MAX_ARRAY_SIZE] lights;
-  lights[0] = Light(vec3(0, 5, 5), vec3(25.0));
-
-  Scene scene = Scene(lights, 1);
-
   Ray ray = cameraRay(uv, iResolution.xy,
                       vec3(2 * sin(iTime / 10), 2 * cos(iTime / 10), 5));
-  vec3 col = renderRay(ray, scene);
+  vec3 col = renderRay(ray);
 
   fragColor = vec4(col, 1.0);
 }
