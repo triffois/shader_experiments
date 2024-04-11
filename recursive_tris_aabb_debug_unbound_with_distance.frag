@@ -54,7 +54,7 @@ Intersection closerIntersection(Intersection a, Intersection b) {
   return a.distance < b.distance ? a : b;
 }
 
-bool intersectAABB(Ray ray, vec3 boxMin, vec3 boxMax) {
+float intersectAABB(Ray ray, vec3 boxMin, vec3 boxMax) {
   vec3 invDir = 1.0 / ray.direction;
   vec3 t0s = (boxMin - ray.origin) * invDir;
   vec3 t1s = (boxMax - ray.origin) * invDir;
@@ -62,7 +62,10 @@ bool intersectAABB(Ray ray, vec3 boxMin, vec3 boxMax) {
   vec3 tbigger = max(t0s, t1s);
   float tmin = max(max(tsmaller.x, tsmaller.y), tsmaller.z);
   float tmax = min(min(tbigger.x, tbigger.y), tbigger.z);
-  return tmax >= tmin;
+  if (tmax >= tmin) {
+    return tmin;
+  }
+  return -1.0;
 };
 
 Intersection intersectTriangle(Ray ray, Triangle triangle, int n_bbox) {
@@ -118,7 +121,12 @@ Intersection intersectScene(Ray ray) {
     int box_id = stack[stack_size];
 
     Box box = boxes[box_id];
-    if (!intersectAABB(ray, box.min.xyz, box.max.xyz)) {
+    float aabb_distance = intersectAABB(ray, box.min.xyz, box.max.xyz);
+    if (aabb_distance < 0.0) {
+      continue;
+    }
+    if (aabb_distance > closestIntersection.distance &&
+        closestIntersection.happened) {
       continue;
     }
     n_bboxes++;
@@ -132,11 +140,24 @@ Intersection intersectScene(Ray ray) {
             closerIntersection(closestIntersection, intersection);
       }
     } else {
-      // Push children
-      stack[stack_size] = box.left_id;
-      stack_size++;
-      stack[stack_size] = box.right_id;
-      stack_size++;
+      // Determine which child is closer to the ray origin
+      vec3 left_center =
+          (boxes[box.left_id].min.xyz + boxes[box.left_id].max.xyz) / 2.0;
+      vec3 right_center =
+          (boxes[box.right_id].min.xyz + boxes[box.right_id].max.xyz) / 2.0;
+      // We visit the closer one first
+      if (length(left_center - ray.origin) <
+          length(right_center - ray.origin)) {
+        stack[stack_size] = box.left_id;
+        stack_size++;
+        stack[stack_size] = box.right_id;
+        stack_size++;
+      } else {
+        stack[stack_size] = box.right_id;
+        stack_size++;
+        stack[stack_size] = box.left_id;
+        stack_size++;
+      }
     }
   }
 
