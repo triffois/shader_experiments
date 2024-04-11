@@ -148,14 +148,14 @@ Intersection intersectScene(Ray ray) {
       // We visit the closer one first
       if (length(left_center - ray.origin) <
           length(right_center - ray.origin)) {
-        stack[stack_size] = box.left_id;
-        stack_size++;
         stack[stack_size] = box.right_id;
+        stack_size++;
+        stack[stack_size] = box.left_id;
         stack_size++;
       } else {
-        stack[stack_size] = box.right_id;
-        stack_size++;
         stack[stack_size] = box.left_id;
+        stack_size++;
+        stack[stack_size] = box.right_id;
         stack_size++;
       }
     }
@@ -185,8 +185,7 @@ vec3 renderRay(Ray ray) {
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   vec2 uv = fragCoord.xy / iResolution.xy;
 
-  Ray ray = cameraRay(uv, iResolution.xy,
-                      vec3(2 * sin(iTime / 10), 2 * cos(iTime / 10), 5));
+  Ray ray = cameraRay(uv, iResolution.xy, vec3(2 * sin(iTime / 2), 0, 3.5));
   vec3 col = renderRay(ray);
 
   fragColor = vec4(col, 1.0);
