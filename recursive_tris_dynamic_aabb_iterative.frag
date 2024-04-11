@@ -5,7 +5,6 @@ uniform vec2 iResolution;
 uniform float iTime;
 uniform int iFrame;
 uniform int triangle_count;
-uniform int root_id;
 
 struct Triangle {
   vec4 v0;
@@ -15,22 +14,11 @@ struct Triangle {
   vec4 max;
 };
 
-struct Box {
-  vec4 min;
-  vec4 max;
-  int left_id;
-  int right_id;
-  int start;
-  int end;
-};
-
 layout(std430, binding = 3) buffer triangles_ssbo { Triangle triangles[]; };
-
-layout(std430, binding = 4) buffer boxes_ssbo { Box boxes[]; };
 
 const int MAX_BOUNCES = 4;
 const float FOCAL_LENGTH = 1.0;
-const int MAX_ARRAY_SIZE = 25;
+const int MAX_ARRAY_SIZE = 10;
 const float WEIGHT_THRESHOLD = 0.01;
 
 struct Ray {
@@ -77,12 +65,17 @@ bool intersectAABB(Ray ray, vec3 boxMin, vec3 boxMax) {
   vec3 t1s = (boxMax - ray.origin) * invDir;
   vec3 tsmaller = min(t0s, t1s);
   vec3 tbigger = max(t0s, t1s);
-  float tmin = max(max(tsmaller.x, tsmaller.y), tsmaller.z);
-  float tmax = min(min(tbigger.x, tbigger.y), tbigger.z);
+  float tmin = min(min(tsmaller.x, tsmaller.y), tsmaller.z);
+  float tmax = max(max(tbigger.x, tbigger.y), tbigger.z);
   return tmax >= tmin;
 };
 
 Intersection intersectTriangle(Ray ray, Triangle triangle) {
+  if (!intersectAABB(ray, triangle.min.xyz, triangle.max.xyz)) {
+    return Intersection(false, 0.0, vec3(0), vec3(0),
+                        MaterialProperties(vec3(0), vec3(0)));
+  }
+
   vec3 edge1 = triangle.v1.xyz - triangle.v0.xyz;
   vec3 edge2 = triangle.v2.xyz - triangle.v0.xyz;
 
@@ -128,36 +121,9 @@ Intersection intersectScene(Ray ray, Scene scene) {
   Intersection closestIntersection = Intersection(
       false, 0.0, vec3(0), vec3(0), MaterialProperties(vec3(0), vec3(0)));
 
-  // Create a stack for the boxes as IDs - we need to check
-  int stack[MAX_ARRAY_SIZE];
-  stack[0] = root_id;
-  int stack_size = 1;
-
-  while (stack_size > 0) {
-    // Pop
-    stack_size--;
-    int box_id = stack[stack_size];
-
-    Box box = boxes[box_id];
-    if (!intersectAABB(ray, box.min.xyz, box.max.xyz)) {
-      continue;
-    }
-
-    if (box.left_id == -1 || (stack_size + 1) >= MAX_ARRAY_SIZE) {
-      // Iterate over triangles
-      for (int i = box.start; i < box.end; i++) {
-        Triangle triangle = triangles[i];
-        Intersection intersection = intersectTriangle(ray, triangle);
-        closestIntersection =
-            closerIntersection(closestIntersection, intersection);
-      }
-    } else {
-      // Push children
-      stack[stack_size] = box.left_id;
-      stack_size++;
-      stack[stack_size] = box.right_id;
-      stack_size++;
-    }
+  for (int i = 0; i < triangle_count; i++) {
+    closestIntersection = closerIntersection(
+        closestIntersection, intersectTriangle(ray, triangles[i]));
   }
 
   return closestIntersection;
@@ -228,7 +194,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   vec2 uv = fragCoord.xy / iResolution.xy;
 
   Light[MAX_ARRAY_SIZE] lights;
-  lights[0] = Light(vec3(0, 5, 5), vec3(25.0));
+  lights[0] = Light(vec3(5 * sin(iTime), 5, 5), vec3(25.0));
 
   Scene scene = Scene(lights, 1);
 

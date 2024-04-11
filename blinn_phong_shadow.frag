@@ -80,7 +80,7 @@ vec3 sphere_color(Ray ray, Intersection intersection) {
 vec3 plane_color(Ray ray, Intersection intersection, Sphere sphere) {
   vec3 ambient_color = vec3(0.1);
   vec3 light_color = vec3(1.5, 0.5, 0.5);
-  vec3 diffuse_color = vec3(0.1, 0.1, 1.0);
+  vec3 diffuse_color = vec3(0.5, 1.0, 1.0);
   vec3 specular_color = vec3(1.0);
 
   vec3 light_dir = normalize(vec3(1.0, 1.0, -1.0));
