@@ -38,6 +38,25 @@ struct Ray {
   vec3 direction;
 };
 
+Ray rotateAndOrbitRayY(Ray ray, vec3 center, float angle) {
+  float cosAngle = cos(angle);
+  float sinAngle = sin(angle);
+
+  // Rotate the direction vector around the Y axis
+  vec3 newDirection = vec3(
+      ray.direction.x * cosAngle + ray.direction.z * sinAngle, ray.direction.y,
+      -ray.direction.x * sinAngle + ray.direction.z * cosAngle);
+
+  // Orbit the origin around the center
+  vec3 newOrigin = vec3((ray.origin.x - center.x) * cosAngle +
+                            (ray.origin.z - center.z) * sinAngle + center.x,
+                        ray.origin.y,
+                        -(ray.origin.x - center.x) * sinAngle +
+                            (ray.origin.z - center.z) * cosAngle + center.z);
+
+  return Ray(newOrigin, newDirection);
+}
+
 struct MaterialProperties {
   vec3 color;
   vec3 reflectivity;
@@ -166,7 +185,6 @@ Intersection intersectScene(Ray ray, Scene scene) {
       vec3 right_center =
           (boxes[box.right_id].min.xyz + boxes[box.right_id].max.xyz) / 2.0;
       // We visit the closer one first
-      // therefore it's on top of the stack now
       if (length(left_center - ray.origin) <
           length(right_center - ray.origin)) {
         stack[stack_size] = box.right_id;
@@ -250,12 +268,15 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   vec2 uv = fragCoord.xy / iResolution.xy;
 
   Light[MAX_ARRAY_SIZE] lights;
-  lights[0] = Light(vec3(0, 5, 5), vec3(25.0));
+  lights[0] = Light(vec3(0, 5, 10), vec3(50.0));
+  lights[1] = Light(vec3(10, 5, 0), vec3(50.0));
+  lights[2] = Light(vec3(0, 5, -10), vec3(50.0));
+  lights[3] = Light(vec3(-10, 5, 0), vec3(50.0));
 
-  Scene scene = Scene(lights, 1);
+  Scene scene = Scene(lights, 4);
 
-  Ray ray = cameraRay(uv, iResolution.xy,
-                      vec3(2 * sin(iTime / 10), 2 * cos(iTime / 10), 5));
+  Ray ray = cameraRay(uv, iResolution.xy, vec3(0, .7, 2.5));
+  ray = rotateAndOrbitRayY(ray, vec3(0, 0, 0), iTime);
   vec3 col = renderRay(ray, scene);
 
   fragColor = vec4(col, 1.0);
