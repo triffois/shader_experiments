@@ -68,6 +68,7 @@ struct Intersection {
     vec3 normal;
     MaterialProperties material;
     vec2 uv;
+    uint texture_id;
     uint debug_boxes_checked;
     uint debug_boxes_hit;
     uint debug_triangles_checked;
@@ -75,7 +76,7 @@ struct Intersection {
 };
 Intersection NOINTERSECT =
     Intersection(false, false, 0.0, vec3(0), vec3(0),
-        MaterialProperties(vec3(0), vec3(0)), vec2(0), 0, 0, 0, 0);
+        MaterialProperties(vec3(0), vec3(0)), vec2(0), -1, 0, 0, 0, 0);
 
 Intersection closerIntersection(Intersection a, Intersection b) {
     if (!a.happened) {
@@ -138,7 +139,7 @@ Intersection intersectTriangle(Ray ray, Triangle triangle) {
     vec2 uv = (1 - u - v) * triangle.uv1 + u * triangle.uv2 + v * triangle.uv3;
 
     return Intersection(true, backfacing, t, ray.origin + t * ray.direction,
-        normal, MaterialProperties(vec3(1), vec3(0)), uv, 0, 0, 0,
+        normal, MaterialProperties(vec3(1), vec3(0)), uv, triangle.texture_id, 0, 0, 0,
         0);
 }
 
@@ -248,6 +249,9 @@ Ray cameraRay(vec2 uv, vec2 resolution, vec3 origin) {
 
 vec3 renderRay(Ray ray) {
     Intersection intersection = intersectScene(ray);
+    if (intersection.texture_id == -1) {
+        return intersection.happened ? intersection.material.color : vec3(0);
+    }
     return intersection.happened ? texture(GL_TEXTURE_2D, intersection.uv).rgb : vec3(0);
 }
 
