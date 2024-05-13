@@ -1,6 +1,12 @@
 #version 430 core
+const int MAX_ARRAY_SIZE = 40;
+const int MAX_BOUNCES = 4;
+const float FOCAL_LENGTH = 1.0;
+const float WEIGHT_THRESHOLD = 0.01;
+
 out vec4 FragColor;
 in vec4 gl_FragCoord;
+
 uniform vec2 iResolution;
 uniform float iTime;
 uniform int iFrame;
@@ -11,6 +17,17 @@ uniform sampler2DArray GL_TEXTURE_2D_ARRAY;
 vec4 texture_data(uint texture_id, vec2 uv) {
   return texture(GL_TEXTURE_2D_ARRAY, vec3(uv, texture_id));
 }
+
+struct MaterialProperties {
+  uint texture_id;
+  uint metallic_roughness_texture_id;
+
+  float metallic_factor;
+  float roughness_factor;
+  float alpha_cutoff;
+  uint double_sided; // aka bool
+};
+MaterialProperties NOMATERIAL = MaterialProperties(-1, -1, 0, 0, 0, 0);
 
 struct Triangle {
   vec4 v0;
@@ -23,13 +40,7 @@ struct Triangle {
   vec2 uv2;
   vec2 uv3;
 
-  uint texture_id;
-  uint metallic_roughness_texture_id;
-
-  float metallic_factor;
-  float roughness_factor;
-  float alpha_cutoff;
-  uint double_sided; // aka bool
+  MaterialProperties material;
 };
 
 struct Box {
@@ -45,27 +56,29 @@ layout(std430, binding = 3) buffer triangles_ssbo { Triangle triangles[]; };
 
 layout(std430, binding = 4) buffer boxes_ssbo { Box boxes[]; };
 
-const int MAX_BOUNCES = 4;
-const float FOCAL_LENGTH = 1.0;
-const int MAX_ARRAY_SIZE = 40;
-const float WEIGHT_THRESHOLD = 0.01;
-
 struct Ray {
   vec3 origin;
   vec3 direction;
 };
 
-struct MaterialProperties {
-  uint texture_id;
-  uint metallic_roughness_texture_id;
+Ray rotateAndOrbitRayY(Ray ray, vec3 center, float angle) {
+  float cosAngle = cos(angle);
+  float sinAngle = sin(angle);
 
-  float metallic_factor;
-  float roughness_factor;
-  float alpha_cutoff;
-  uint double_sided; // aka bool
-};
+  // Rotate the direction vector around the Y axis
+  vec3 newDirection = vec3(
+      ray.direction.x * cosAngle + ray.direction.z * sinAngle, ray.direction.y,
+      -ray.direction.x * sinAngle + ray.direction.z * cosAngle);
 
-MaterialProperties NOMATERIAL = MaterialProperties(-1, -1, 0, 0, 0, 0);
+  // Orbit the origin around the center
+  vec3 newOrigin = vec3((ray.origin.x - center.x) * cosAngle +
+                            (ray.origin.z - center.z) * sinAngle + center.x,
+                        ray.origin.y,
+                        -(ray.origin.x - center.x) * sinAngle +
+                            (ray.origin.z - center.z) * cosAngle + center.z);
+
+  return Ray(newOrigin, newDirection);
+}
 
 struct Intersection {
   bool happened;
@@ -143,17 +156,12 @@ Intersection intersectTriangle(Ray ray, Triangle triangle) {
 
   vec2 uv = (1 - u - v) * triangle.uv1 + u * triangle.uv2 + v * triangle.uv3;
 
-  MaterialProperties material = MaterialProperties(
-      triangle.texture_id, triangle.metallic_roughness_texture_id,
-      triangle.metallic_factor, triangle.roughness_factor,
-      triangle.alpha_cutoff, triangle.double_sided);
-
-  if (texture_data(material.texture_id, uv).a < material.alpha_cutoff) {
+  if (texture_data(triangle.material.texture_id, uv).a < triangle.material.alpha_cutoff) {
     return NOINTERSECT;
   }
 
   return Intersection(true, backfacing, t, ray.origin + t * ray.direction,
-                      normal, material, uv, 0, 0, 0, 0);
+                      normal, triangle.material, uv, 0, 0, 0, 0);
 }
 
 Intersection intersectScene(Ray ray) {
@@ -268,25 +276,6 @@ vec3 renderRay(Ray ray) {
              : vec3(1);
 }
 
-Ray rotateAndOrbitRayY(Ray ray, vec3 center, float angle) {
-  float cosAngle = cos(angle);
-  float sinAngle = sin(angle);
-
-  // Rotate the direction vector around the Y axis
-  vec3 newDirection = vec3(
-      ray.direction.x * cosAngle + ray.direction.z * sinAngle, ray.direction.y,
-      -ray.direction.x * sinAngle + ray.direction.z * cosAngle);
-
-  // Orbit the origin around the center
-  vec3 newOrigin = vec3((ray.origin.x - center.x) * cosAngle +
-                            (ray.origin.z - center.z) * sinAngle + center.x,
-                        ray.origin.y,
-                        -(ray.origin.x - center.x) * sinAngle +
-                            (ray.origin.z - center.z) * cosAngle + center.z);
-
-  return Ray(newOrigin, newDirection);
-}
-
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   vec2 uv = fragCoord.xy / iResolution.xy;
 
@@ -297,5 +286,4 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   fragColor = vec4(col, 1.0);
 }
 
-void main() { mainImage(FragColor, gl_FragCoord.xy); }
 void main() { mainImage(FragColor, gl_FragCoord.xy); }
