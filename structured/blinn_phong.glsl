@@ -280,12 +280,27 @@ Ray cameraRay(vec2 uv, vec2 resolution) {
                                rotation.y));
 }
 
+vec3 blinn_phong(vec3 light_dir, vec3 normal, vec3 view_dir, float shininess,
+                 vec3 light_color, vec3 diffuse_color, vec3 specular_color,
+                 vec3 ambient_color) {
+  vec3 half_dir = normalize(light_dir + view_dir);
+  float intensity = max(dot(normal, light_dir), 0.0);
+  float specular = pow(max(dot(normal, half_dir), 0.0), shininess);
+  return light_color * (diffuse_color * intensity + specular_color * specular) +
+         ambient_color * diffuse_color;
+}
+
 vec3 renderRay(Ray ray) {
   Intersection intersection = intersectScene(ray);
-  return intersection.happened
-             ? texture_data(intersection.material.texture_id, intersection.uv)
-                   .rgb
-             : ray.direction * 0.5 + 0.5;
+  if (!intersection.happened) {
+    return ray.direction * 0.5 + 0.5;
+  }
+
+  vec3 model_color =
+      texture_data(intersection.material.texture_id, intersection.uv).rgb;
+  return blinn_phong(normalize(vec3(1, 1, 1)), intersection.normal,
+                     -ray.direction, 8.0, vec3(1), model_color, model_color,
+                     vec3(0.1));
 }
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {

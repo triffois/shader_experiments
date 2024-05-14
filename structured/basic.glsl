@@ -107,6 +107,13 @@ Intersection closerIntersection(Intersection a, Intersection b) {
 }
 
 float intersectAABB(Ray ray, vec3 boxMin, vec3 boxMax) {
+  // Special case: we're inside the box
+  if (ray.origin.x >= boxMin.x && ray.origin.x <= boxMax.x &&
+      ray.origin.y >= boxMin.y && ray.origin.y <= boxMax.y &&
+      ray.origin.z >= boxMin.z && ray.origin.z <= boxMax.z) {
+    return 0.0;
+  }
+
   vec3 invDir = 1.0 / ray.direction;
   vec3 t0s = (boxMin - ray.origin) * invDir;
   vec3 t1s = (boxMax - ray.origin) * invDir;
