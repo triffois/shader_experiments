@@ -4,6 +4,7 @@ const int MAX_BOUNCES = 8;
 const float FOCAL_LENGTH = 1.0;
 const float WEIGHT_THRESHOLD = 0.001;
 const float EPSILON = 0.001;
+const float AMBIENT = 0.1;
 
 out vec4 FragColor;
 in vec4 gl_FragCoord;
@@ -347,6 +348,22 @@ float fresnel(vec3 I, vec3 N, float eta) {
   return R0 + (1.0 - R0) * pow(1.0 - abs(cosi), 5.0);
 }
 
+float rand(vec2 c) {
+  return fract(sin(dot(c.xy, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+float noise(vec2 p) {
+  vec2 ij = floor(p);
+  vec2 xy = p - ij;
+  float a = rand((ij + vec2(0., 0.)));
+  float b = rand((ij + vec2(1., 0.)));
+  float c = rand((ij + vec2(0., 1.)));
+  float d = rand((ij + vec2(1., 1.)));
+  float x1 = mix(a, b, xy.x);
+  float x2 = mix(c, d, xy.x);
+  return mix(x1, x2, xy.y);
+}
+
 vec3 renderRay(Ray ray) {
   Bounce bounces[MAX_ARRAY_SIZE];
   int bounces_length = 1;
@@ -380,13 +397,13 @@ vec3 renderRay(Ray ray) {
     Intersection shadow =
         intersectScene(Ray(intersection.position, normalize(vec3(1, 1, 1))),
                        intersection.triangle_id);
-    if (!shadow.happened) {
-      accumulated +=
-          bounce.weight *
-          max(0, dot(intersection.normal, normalize(vec3(1, 1, 1)))) *
-          intersection.material.base_color_factor.rgb *
-          texture_data(intersection.material.texture_id, intersection.uv).rgb;
-    }
+    accumulated +=
+        bounce.weight *
+        max(0, shadow.happened ? AMBIENT
+                               : (AMBIENT + dot(intersection.normal,
+                                                normalize(vec3(1, 1, 1))))) *
+        intersection.material.base_color_factor.rgb *
+        texture_data(intersection.material.texture_id, intersection.uv).rgb;
 
     accumulated +=
         bounce.weight * intersection.material.emissive_color_factor.rgb *
@@ -398,15 +415,21 @@ vec3 renderRay(Ray ray) {
     }
 
     // Refractive thingys should be wavy :3
-    vec3 wavy_normal =
-        normalize(intersection.normal +
-                  vec3(sin(intersection.position.x * 10),
-                       sin(intersection.position.y * 10),
-                       sin(intersection.position.z * 10)) *
-                      0.1 * (1.0 - intersection.material.metallic_factor));
+    vec3 wavy_normal = normalize(
+        intersection.normal +
+        vec3(noise(8.0 *
+                   vec2(intersection.position.x + intersection.position.y,
+                        intersection.position.z + intersection.position.y)),
+             noise(8.0 * vec2(intersection.position.x + intersection.position.y,
+                              intersection.position.z +
+                                  intersection.position.y + 1000.5)),
+             noise(8.0 * vec2(intersection.position.x + intersection.position.y,
+                              intersection.position.z +
+                                  intersection.position.y + 100.0))) *
+            0.05 * (1.0 - intersection.material.metallic_factor));
 
     // Reflected and refracted rays
-    float ior = 1.5;
+    float ior = 1.33;
     float eta = 1.0 / ior;
     vec3 reflection = reflect(bounce.ray.direction, wavy_normal);
     vec3 refraction = refract(bounce.ray.direction, wavy_normal, eta);
@@ -428,11 +451,14 @@ vec3 renderRay(Ray ray) {
     refraction_weight *= 1.0 - intersection.material.roughness_factor;
     reflection_weight *= 1.0 - intersection.material.roughness_factor;
 
+    vec3 reflection_color = reflection_weight * vec3(1); // TODO
+    vec3 refraction_color = refraction_weight * vec3(0.5, 0.5, 1);
+
     // Reflection
     if (reflection_weight != 0.0) {
       bounces[imod(bounces_start + bounces_length, MAX_ARRAY_SIZE)] =
           Bounce(Ray(intersection.position + EPSILON * reflection, reflection),
-                 bounce.weight * reflection_weight, intersection.triangle_id);
+                 bounce.weight * reflection_color, intersection.triangle_id);
       bounces_length++;
     }
 
@@ -445,7 +471,7 @@ vec3 renderRay(Ray ray) {
       // Refraction
       bounces[imod(bounces_start + bounces_length, MAX_ARRAY_SIZE)] =
           Bounce(Ray(intersection.position + EPSILON * refraction, refraction),
-                 bounce.weight * refraction_weight, intersection.triangle_id);
+                 bounce.weight * refraction_color, intersection.triangle_id);
       bounces_length++;
     }
   }
