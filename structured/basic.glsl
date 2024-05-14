@@ -14,8 +14,14 @@ uniform int triangle_count;
 uniform int root_id;
 uniform sampler2DArray GL_TEXTURE_2D_ARRAY;
 
+layout(std430, binding = 5) buffer texture_sizes_ssbo { vec4 texture_sizes[]; };
+
 vec4 texture_data(uint texture_id, vec2 uv) {
-  return texture(GL_TEXTURE_2D_ARRAY, vec3(mod(uv, 1), texture_id));
+  if (texture_id > 1000000) { // Or any other large enough number
+    return vec4(0, 0, 0, 1);
+  }
+  vec2 size_multiplier = texture_sizes[texture_id].xy;
+  return texture(GL_TEXTURE_2D_ARRAY, vec3(uv * size_multiplier, texture_id));
 }
 
 struct MaterialProperties {
@@ -287,7 +293,7 @@ vec3 renderRay(Ray ray) {
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   vec2 uv = fragCoord.xy / iResolution.xy;
 
-  Ray ray = cameraRay(uv, iResolution.xy, vec3(0, .5, 1.75));
+  Ray ray = cameraRay(uv, iResolution.xy, vec3(0, 1, 2.0));
   ray = rotateAndOrbitRayY(ray, vec3(0, 0, 0), iTime);
   vec3 col = renderRay(ray);
 

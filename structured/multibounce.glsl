@@ -1,8 +1,8 @@
 #version 430 core
 const int MAX_ARRAY_SIZE = 40;
-const int MAX_BOUNCES = 4;
+const int MAX_BOUNCES = 8;
 const float FOCAL_LENGTH = 1.0;
-const float WEIGHT_THRESHOLD = 0.01;
+const float WEIGHT_THRESHOLD = 0.001;
 const float EPSILON = 0.001;
 
 out vec4 FragColor;
@@ -19,12 +19,21 @@ uniform vec3 position;
 
 layout(std430, binding = 5) buffer texture_sizes_ssbo { vec4 texture_sizes[]; };
 
+int imod(int a, int b) { return a - b * int(float(a) / float(b)); }
+
 vec4 texture_data(uint texture_id, vec2 uv) {
   if (texture_id > 1000000) { // Or any other large enough number
     return vec4(0, 0, 0, 1);
   }
   vec2 size_multiplier = texture_sizes[texture_id].xy;
   return texture(GL_TEXTURE_2D_ARRAY, vec3(uv * size_multiplier, texture_id));
+}
+
+vec3 sky_texture(vec3 direction) {
+  float theta = atan(direction.z, direction.x);
+  float phi = acos(direction.y);
+  vec2 uv = vec2(theta / (2.0 * 3.14159265359), phi / 3.14159265359);
+  return vec3(0.5, 0.5, 1); /// texture(GL_TEXTURE_2D, uv).rgb;
 }
 
 struct MaterialProperties {
@@ -35,8 +44,11 @@ struct MaterialProperties {
   float roughness_factor;
   float alpha_cutoff;
   uint double_sided; // aka bool
+  vec4 emissive_color_factor;
+  vec4 base_color_factor;
 };
-MaterialProperties NOMATERIAL = MaterialProperties(-1, -1, 0, 0, 0, 0);
+MaterialProperties NOMATERIAL =
+    MaterialProperties(-1, -1, 0, 0, 0, 0, vec4(0), vec4(0));
 
 struct Triangle {
   vec4 v0;
@@ -49,7 +61,16 @@ struct Triangle {
   vec2 uv2;
   vec2 uv3;
 
-  MaterialProperties material;
+  // Duplicating this cause layout
+  uint texture_id;
+  uint metallic_roughness_texture_id;
+
+  float metallic_factor;
+  float roughness_factor;
+  float alpha_cutoff;
+  uint double_sided; // aka bool
+  vec4 emissive_color_factor;
+  vec4 base_color_factor;
 };
 
 struct Box {
@@ -93,13 +114,14 @@ struct Intersection {
   vec3 normal;
   MaterialProperties material;
   vec2 uv;
+  int triangle_id;
   uint debug_boxes_checked;
   uint debug_boxes_hit;
   uint debug_triangles_checked;
   uint debug_triangles_hit;
 };
 Intersection NOINTERSECT = Intersection(false, false, 0.0, vec3(0), vec3(0),
-                                        NOMATERIAL, vec2(0), 0, 0, 0, 0);
+                                        NOMATERIAL, vec2(0), -1, 0, 0, 0, 0);
 
 Intersection closerIntersection(Intersection a, Intersection b) {
   if (!a.happened) {
@@ -132,7 +154,9 @@ float intersectAABB(Ray ray, vec3 boxMin, vec3 boxMax) {
   return -1.0;
 };
 
-Intersection intersectTriangle(Ray ray, Triangle triangle) {
+Intersection intersectTriangle(Ray ray, int triangle_id) {
+  Triangle triangle = triangles[triangle_id];
+
   vec3 edge1 = triangle.v1.xyz - triangle.v0.xyz;
   vec3 edge2 = triangle.v2.xyz - triangle.v0.xyz;
 
@@ -168,20 +192,26 @@ Intersection intersectTriangle(Ray ray, Triangle triangle) {
 
   vec2 uv = (1 - u - v) * triangle.uv1 + u * triangle.uv2 + v * triangle.uv3;
 
-  if (texture_data(triangle.material.texture_id, uv).a <
-      triangle.material.alpha_cutoff) {
+  if (texture_data(triangle.texture_id, uv).a < triangle.alpha_cutoff) {
     return NOINTERSECT;
   }
 
-  if (backfacing && triangle.material.double_sided == 0) {
+  if (backfacing && triangle.double_sided == 0) {
     return NOINTERSECT;
   }
+
+  MaterialProperties material = MaterialProperties(
+      triangle.texture_id, triangle.metallic_roughness_texture_id,
+
+      triangle.metallic_factor, triangle.roughness_factor,
+      triangle.alpha_cutoff, triangle.double_sided,
+      triangle.emissive_color_factor, triangle.base_color_factor);
 
   return Intersection(true, backfacing, t, ray.origin + t * ray.direction,
-                      normal, triangle.material, uv, 0, 0, 0, 0);
+                      normal, material, uv, triangle_id, 0, 0, 0, 0);
 }
 
-Intersection intersectScene(Ray ray) {
+Intersection intersectScene(Ray ray, int ignored_triangle) {
   Intersection closestIntersection = NOINTERSECT;
 
   // Check whether we intersect the scene at all
@@ -211,8 +241,11 @@ Intersection intersectScene(Ray ray) {
       for (int i = box.start; i < box.end; i++) {
         debug_triangles_checked++;
 
-        Triangle triangle = triangles[i];
-        Intersection intersection = intersectTriangle(ray, triangle);
+        if (i == ignored_triangle) {
+          continue;
+        }
+
+        Intersection intersection = intersectTriangle(ray, i);
 
         if (intersection.happened) {
           debug_triangles_hit++;
@@ -288,12 +321,37 @@ Ray cameraRay(vec2 uv, vec2 resolution) {
 struct Bounce {
   Ray ray;
   vec3 weight;
+  int source;
 };
+
+vec3 calculateRefraction(vec3 I, vec3 N, float eta) {
+  // The builtin one didn't work
+  float cosi = dot(N, I);
+  float cost2 = 1.0 - eta * eta * (1.0 - cosi * cosi);
+  if (cost2 < 0.0)    // Total internal reflection
+    return vec3(0.0); // Use vec3(0.0) to symbolize complete reflection
+
+  return eta * I - (eta * cosi + sqrt(cost2)) * N;
+}
+
+float fresnel(vec3 I, vec3 N, float eta) {
+  float cosi = clamp(dot(I, N), -1.0, 1.0);
+  float etai = 1.0, etat = eta;
+  if (cosi > 0.0) {
+    float c = etat;
+    etat = etai;
+    etai = c;
+  }
+  // Using Schlick's approximation
+  float R0 = ((etai - etat) / (etai + etat)) * ((etai - etat) / (etai + etat));
+  return R0 + (1.0 - R0) * pow(1.0 - abs(cosi), 5.0);
+}
 
 vec3 renderRay(Ray ray) {
   Bounce bounces[MAX_ARRAY_SIZE];
   int bounces_length = 1;
-  bounces[0] = Bounce(ray, vec3(1.0));
+  int bounces_start = 0; // It's a queue
+  bounces[0] = Bounce(ray, vec3(1.0), -1);
 
   vec3 accumulated = vec3(0.0);
 
@@ -303,7 +361,8 @@ vec3 renderRay(Ray ray) {
     }
 
     bounces_length--;
-    Bounce bounce = bounces[bounces_length];
+    Bounce bounce = bounces[imod(bounces_start, MAX_ARRAY_SIZE)];
+    bounces_start++;
 
     if (bounce.weight.x < WEIGHT_THRESHOLD &&
         bounce.weight.y < WEIGHT_THRESHOLD &&
@@ -311,35 +370,84 @@ vec3 renderRay(Ray ray) {
       continue;
     }
 
-    Intersection intersection = intersectScene(bounce.ray);
+    Intersection intersection = intersectScene(bounce.ray, bounce.source);
     if (!intersection.happened) {
+      accumulated += sky_texture(ray.direction) * bounce.weight;
       continue;
     }
 
+    // Shadow ray
+    Intersection shadow =
+        intersectScene(Ray(intersection.position, normalize(vec3(1, 1, 1))),
+                       intersection.triangle_id);
+    if (!shadow.happened) {
+      accumulated +=
+          bounce.weight *
+          max(0, dot(intersection.normal, normalize(vec3(1, 1, 1)))) *
+          intersection.material.base_color_factor.rgb *
+          texture_data(intersection.material.texture_id, intersection.uv).rgb;
+    }
+
     accumulated +=
-        bounce.weight *
-        //(0.1 + max(0, dot(intersection.normal, normalize(vec3(1, 1, 1))))) *
+        bounce.weight * intersection.material.emissive_color_factor.rgb *
         texture_data(intersection.material.texture_id, intersection.uv).rgb;
 
-    if (bounces_length >= MAX_ARRAY_SIZE - 1) {
+    if (bounces_length >= MAX_ARRAY_SIZE) {
       // Can't add more bounces
       continue;
     }
 
-    // Reflected ray
-    vec3 reflection = reflect(bounce.ray.direction, intersection.normal);
-    bounces[bounces_length] =
-        Bounce(Ray(intersection.position + EPSILON * reflection, reflection),
-               bounce.weight * intersection.material.metallic_factor);
-    bounces_length++;
+    // Refractive thingys should be wavy :3
+    vec3 wavy_normal =
+        normalize(intersection.normal +
+                  vec3(sin(intersection.position.x * 10),
+                       sin(intersection.position.y * 10),
+                       sin(intersection.position.z * 10)) *
+                      0.1 * (1.0 - intersection.material.metallic_factor));
 
-    // Refracted ray
-    vec3 refraction = refract(bounce.ray.direction, intersection.normal,
-                              intersection.backfacing ? 1.0 / 1.5 : 1.5);
-    bounces[bounces_length] =
-        Bounce(Ray(intersection.position + EPSILON * refraction, refraction),
-               bounce.weight * (1.0 - intersection.material.roughness_factor));
-    bounces_length++;
+    // Reflected and refracted rays
+    float ior = 1.5;
+    float eta = 1.0 / ior;
+    vec3 reflection = reflect(bounce.ray.direction, wavy_normal);
+    vec3 refraction = refract(bounce.ray.direction, wavy_normal, eta);
+
+    // Calculate the factors:
+    float fresnel_factor = fresnel(bounce.ray.direction, wavy_normal, ior);
+    float reflection_weight = fresnel_factor;
+    float refraction_weight = 1.0 - fresnel_factor;
+
+    if (length(refraction) == 0.0) {
+      refraction_weight = 0.0;
+      reflection_weight = 1.0;
+    }
+
+    refraction_weight *= 1.0 - intersection.material.metallic_factor;
+    reflection_weight *= 1.0 - intersection.material.metallic_factor;
+    reflection_weight += intersection.material.metallic_factor;
+
+    refraction_weight *= 1.0 - intersection.material.roughness_factor;
+    reflection_weight *= 1.0 - intersection.material.roughness_factor;
+
+    // Reflection
+    if (reflection_weight != 0.0) {
+      bounces[imod(bounces_start + bounces_length, MAX_ARRAY_SIZE)] =
+          Bounce(Ray(intersection.position + EPSILON * reflection, reflection),
+                 bounce.weight * reflection_weight, intersection.triangle_id);
+      bounces_length++;
+    }
+
+    if (bounces_length >= MAX_ARRAY_SIZE) {
+      // Can't add more bounces
+      continue;
+    }
+
+    if (refraction_weight != 0.0) {
+      // Refraction
+      bounces[imod(bounces_start + bounces_length, MAX_ARRAY_SIZE)] =
+          Bounce(Ray(intersection.position + EPSILON * refraction, refraction),
+                 bounce.weight * refraction_weight, intersection.triangle_id);
+      bounces_length++;
+    }
   }
 
   return accumulated;
@@ -351,7 +459,8 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   Ray ray = cameraRay(uv, iResolution.xy);
   vec3 col = renderRay(ray);
 
-  fragColor = vec4(col, 1.0);
+  float screenGamma = 2.2;
+  fragColor = vec4(pow(col * 0.75, vec3(1.0 / screenGamma)), 1.0);
 }
 
 void main() { mainImage(FragColor, gl_FragCoord.xy); }
