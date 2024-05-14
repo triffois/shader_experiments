@@ -364,16 +364,6 @@ struct Bounce {
   int source;
 };
 
-vec3 calculateRefraction(vec3 I, vec3 N, float eta) {
-  // The builtin one didn't work
-  float cosi = dot(N, I);
-  float cost2 = 1.0 - eta * eta * (1.0 - cosi * cosi);
-  if (cost2 < 0.0)    // Total internal reflection
-    return vec3(0.0); // Use vec3(0.0) to symbolize complete reflection
-
-  return eta * I - (eta * cosi + sqrt(cost2)) * N;
-}
-
 float fresnel(vec3 I, vec3 N, float eta) {
   float cosi = clamp(dot(I, N), -1.0, 1.0);
   float etai = 1.0, etat = eta;
@@ -387,17 +377,13 @@ float fresnel(vec3 I, vec3 N, float eta) {
   return R0 + (1.0 - R0) * pow(1.0 - abs(cosi), 5.0);
 }
 
-float rand(vec2 c) {
-  return fract(sin(dot(c.xy, vec2(12.9898, 78.233))) * 43758.5453);
-}
-
 float noise(vec2 p) {
   vec2 ij = floor(p);
   vec2 xy = p - ij;
-  float a = rand((ij + vec2(0., 0.)));
-  float b = rand((ij + vec2(1., 0.)));
-  float c = rand((ij + vec2(0., 1.)));
-  float d = rand((ij + vec2(1., 1.)));
+  float a = random((ij + vec2(0., 0.)));
+  float b = random((ij + vec2(1., 0.)));
+  float c = random((ij + vec2(0., 1.)));
+  float d = random((ij + vec2(1., 1.)));
   float x1 = mix(a, b, xy.x);
   float x2 = mix(c, d, xy.x);
   return mix(x1, x2, xy.y);
@@ -521,7 +507,9 @@ vec3 renderRay(Ray ray) {
           continue;
         }
 
-        // Global illumination
+        // Global illumination approximation
+        // Kinda monte-carlo, but just completely the wrong distribution
+        // Also, biased towards the axes
         vec3 direction_offset =
             normalize(vec3(random(vec4(intersection.position, iTime)),
                            random(vec4(intersection.position, iTime + 1.0)),
