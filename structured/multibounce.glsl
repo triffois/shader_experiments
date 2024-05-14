@@ -3,6 +3,7 @@ const int MAX_ARRAY_SIZE = 40;
 const int MAX_BOUNCES = 4;
 const float FOCAL_LENGTH = 1.0;
 const float WEIGHT_THRESHOLD = 0.01;
+const float EPSILON = 0.001;
 
 out vec4 FragColor;
 in vec4 gl_FragCoord;
@@ -13,9 +14,10 @@ uniform int iFrame;
 uniform int triangle_count;
 uniform int root_id;
 uniform sampler2DArray GL_TEXTURE_2D_ARRAY;
+uniform mat4 MVP;
 
 vec4 texture_data(uint texture_id, vec2 uv) {
-  return texture(GL_TEXTURE_2D_ARRAY, vec3(mod(uv, 1), texture_id));
+  return texture(GL_TEXTURE_2D_ARRAY, vec3(uv, texture_id));
 }
 
 struct MaterialProperties {
@@ -94,7 +96,7 @@ struct Intersection {
   uint debug_triangles_hit;
 };
 Intersection NOINTERSECT = Intersection(false, false, 0.0, vec3(0), vec3(0),
-                                        NOMATERIAL, vec2(0), 0, 0, 0, 0);
+                                        NOMATERIAL, vec2(0), 1, 0, 0, 0);
 
 Intersection closerIntersection(Intersection a, Intersection b) {
   if (!a.happened) {
@@ -156,10 +158,10 @@ Intersection intersectTriangle(Ray ray, Triangle triangle) {
 
   vec2 uv = (1 - u - v) * triangle.uv1 + u * triangle.uv2 + v * triangle.uv3;
 
-  if (texture_data(triangle.material.texture_id, uv).a <
-      triangle.material.alpha_cutoff) {
-    return NOINTERSECT;
-  }
+  // if (texture_data(triangle.material.texture_id, uv).a <
+  //     triangle.material.alpha_cutoff) {
+  //   return NOINTERSECT;
+  // }
 
   return Intersection(true, backfacing, t, ray.origin + t * ray.direction,
                       normal, triangle.material, uv, 0, 0, 0, 0);
@@ -269,19 +271,25 @@ Ray cameraRay(vec2 uv, vec2 resolution, vec3 origin) {
   return Ray(origin, normalize(point_on_sensor - ray_origin));
 }
 
+struct NextBounce {
+  vec3 weight;
+  Ray ray;
+};
+
 vec3 renderRay(Ray ray) {
-  Intersection intersection = intersectScene(ray);
-  return intersection.happened
-             ? texture_data(intersection.material.texture_id, intersection.uv)
-                   .rgb
-             : vec3(0);
+  Intersection directIntersection = intersectScene(ray);
+  if (!directIntersection.happened) {
+    return vec3(0);
+  }
+  return directIntersection.backfacing ? vec3(1, 0, 0) : vec3(0, 1, 0);
 }
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   vec2 uv = fragCoord.xy / iResolution.xy;
 
-  Ray ray = cameraRay(uv, iResolution.xy, vec3(0, .5, 1.75));
-  ray = rotateAndOrbitRayY(ray, vec3(0, 0, 0), iTime);
+  Ray ray = cameraRay(uv, iResolution.xy, vec3(0));
+  ray.origin = (MVP * vec4(ray.origin, 1)).xyz;
+  ray.direction = (MVP * vec4(ray.direction, 0)).xyz;
   vec3 col = renderRay(ray);
 
   fragColor = vec4(col, 1.0);

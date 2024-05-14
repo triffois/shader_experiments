@@ -13,9 +13,17 @@ uniform int iFrame;
 uniform int triangle_count;
 uniform int root_id;
 uniform sampler2DArray GL_TEXTURE_2D_ARRAY;
+uniform vec2 rotation;
+uniform vec3 position;
+
+layout(std430, binding = 5) buffer texture_sizes_ssbo { vec4 texture_sizes[]; };
 
 vec4 texture_data(uint texture_id, vec2 uv) {
-  return texture(GL_TEXTURE_2D_ARRAY, vec3(mod(uv, 1), texture_id));
+  if (texture_id > 1000000) { // Or any other large enough number
+    return vec4(1);
+  }
+  vec2 size_multiplier = texture_sizes[texture_id].xy;
+  return texture(GL_TEXTURE_2D_ARRAY, vec3(uv * size_multiplier, texture_id));
 }
 
 struct MaterialProperties {
@@ -53,7 +61,6 @@ struct Box {
 };
 
 layout(std430, binding = 3) buffer triangles_ssbo { Triangle triangles[]; };
-
 layout(std430, binding = 4) buffer boxes_ssbo { Box boxes[]; };
 
 struct Ray {
@@ -61,23 +68,20 @@ struct Ray {
   vec3 direction;
 };
 
-Ray rotateAndOrbitRayY(Ray ray, vec3 center, float angle) {
+vec3 rotateX(vec3 direction, float angle) {
   float cosAngle = cos(angle);
   float sinAngle = sin(angle);
 
-  // Rotate the direction vector around the Y axis
-  vec3 newDirection = vec3(
-      ray.direction.x * cosAngle + ray.direction.z * sinAngle, ray.direction.y,
-      -ray.direction.x * sinAngle + ray.direction.z * cosAngle);
+  return vec3(direction.x, direction.y * cosAngle - direction.z * sinAngle,
+              direction.y * sinAngle + direction.z * cosAngle);
+}
 
-  // Orbit the origin around the center
-  vec3 newOrigin = vec3((ray.origin.x - center.x) * cosAngle +
-                            (ray.origin.z - center.z) * sinAngle + center.x,
-                        ray.origin.y,
-                        -(ray.origin.x - center.x) * sinAngle +
-                            (ray.origin.z - center.z) * cosAngle + center.z);
+vec3 rotateY(vec3 direction, float angle) {
+  float cosAngle = cos(angle);
+  float sinAngle = sin(angle);
 
-  return Ray(newOrigin, newDirection);
+  return vec3(direction.x * cosAngle + direction.z * sinAngle, direction.y,
+              -direction.x * sinAngle + direction.z * cosAngle);
 }
 
 struct Intersection {
@@ -262,11 +266,11 @@ Intersection intersectScene(Ray ray) {
   return closestIntersection;
 }
 
-Ray cameraRay(vec2 uv, vec2 resolution, vec3 origin) {
-  vec3 ray_origin = vec3(0);
+Ray cameraRay(vec2 uv, vec2 resolution) {
   vec2 sensor_size = vec2(resolution.x / resolution.y, 1);
   vec3 point_on_sensor = vec3((uv - 0.5) * sensor_size, -FOCAL_LENGTH);
-  return Ray(origin, normalize(point_on_sensor - ray_origin));
+  return Ray(position, rotateY(rotateX(normalize(point_on_sensor), rotation.x),
+                               rotation.y));
 }
 
 vec3 renderRay(Ray ray) {
@@ -274,14 +278,13 @@ vec3 renderRay(Ray ray) {
   return intersection.happened
              ? texture_data(intersection.material.texture_id, intersection.uv)
                    .rgb
-             : vec3(0);
+             : ray.direction * 0.5 + 0.5;
 }
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   vec2 uv = fragCoord.xy / iResolution.xy;
 
-  Ray ray = cameraRay(uv, iResolution.xy, vec3(0, .5, 1.75));
-  ray = rotateAndOrbitRayY(ray, vec3(0, 0, 0), iTime);
+  Ray ray = cameraRay(uv, iResolution.xy);
   vec3 col = renderRay(ray);
 
   fragColor = vec4(col, 1.0);
