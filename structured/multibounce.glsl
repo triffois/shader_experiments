@@ -14,10 +14,17 @@ uniform int iFrame;
 uniform int triangle_count;
 uniform int root_id;
 uniform sampler2DArray GL_TEXTURE_2D_ARRAY;
-uniform mat4 MVP;
+uniform vec2 rotation;
+uniform vec3 position;
+
+layout(std430, binding = 5) buffer texture_sizes_ssbo { vec4 texture_sizes[]; };
 
 vec4 texture_data(uint texture_id, vec2 uv) {
-  return texture(GL_TEXTURE_2D_ARRAY, vec3(uv, texture_id));
+  if (texture_id > 1000000) { // Or any other large enough number
+    return vec4(0, 0, 0, 1);
+  }
+  vec2 size_multiplier = texture_sizes[texture_id].xy;
+  return texture(GL_TEXTURE_2D_ARRAY, vec3(uv * size_multiplier, texture_id));
 }
 
 struct MaterialProperties {
@@ -55,7 +62,6 @@ struct Box {
 };
 
 layout(std430, binding = 3) buffer triangles_ssbo { Triangle triangles[]; };
-
 layout(std430, binding = 4) buffer boxes_ssbo { Box boxes[]; };
 
 struct Ray {
@@ -63,23 +69,20 @@ struct Ray {
   vec3 direction;
 };
 
-Ray rotateAndOrbitRayY(Ray ray, vec3 center, float angle) {
+vec3 rotateX(vec3 direction, float angle) {
   float cosAngle = cos(angle);
   float sinAngle = sin(angle);
 
-  // Rotate the direction vector around the Y axis
-  vec3 newDirection = vec3(
-      ray.direction.x * cosAngle + ray.direction.z * sinAngle, ray.direction.y,
-      -ray.direction.x * sinAngle + ray.direction.z * cosAngle);
+  return vec3(direction.x, direction.y * cosAngle - direction.z * sinAngle,
+              direction.y * sinAngle + direction.z * cosAngle);
+}
 
-  // Orbit the origin around the center
-  vec3 newOrigin = vec3((ray.origin.x - center.x) * cosAngle +
-                            (ray.origin.z - center.z) * sinAngle + center.x,
-                        ray.origin.y,
-                        -(ray.origin.x - center.x) * sinAngle +
-                            (ray.origin.z - center.z) * cosAngle + center.z);
+vec3 rotateY(vec3 direction, float angle) {
+  float cosAngle = cos(angle);
+  float sinAngle = sin(angle);
 
-  return Ray(newOrigin, newDirection);
+  return vec3(direction.x * cosAngle + direction.z * sinAngle, direction.y,
+              -direction.x * sinAngle + direction.z * cosAngle);
 }
 
 struct Intersection {
@@ -96,7 +99,7 @@ struct Intersection {
   uint debug_triangles_hit;
 };
 Intersection NOINTERSECT = Intersection(false, false, 0.0, vec3(0), vec3(0),
-                                        NOMATERIAL, vec2(0), 1, 0, 0, 0);
+                                        NOMATERIAL, vec2(0), 0, 0, 0, 0);
 
 Intersection closerIntersection(Intersection a, Intersection b) {
   if (!a.happened) {
@@ -109,6 +112,13 @@ Intersection closerIntersection(Intersection a, Intersection b) {
 }
 
 float intersectAABB(Ray ray, vec3 boxMin, vec3 boxMax) {
+  // Special case: we're inside the box
+  if (ray.origin.x >= boxMin.x && ray.origin.x <= boxMax.x &&
+      ray.origin.y >= boxMin.y && ray.origin.y <= boxMax.y &&
+      ray.origin.z >= boxMin.z && ray.origin.z <= boxMax.z) {
+    return 0.0;
+  }
+
   vec3 invDir = 1.0 / ray.direction;
   vec3 t0s = (boxMin - ray.origin) * invDir;
   vec3 t1s = (boxMax - ray.origin) * invDir;
@@ -158,10 +168,14 @@ Intersection intersectTriangle(Ray ray, Triangle triangle) {
 
   vec2 uv = (1 - u - v) * triangle.uv1 + u * triangle.uv2 + v * triangle.uv3;
 
-  // if (texture_data(triangle.material.texture_id, uv).a <
-  //     triangle.material.alpha_cutoff) {
-  //   return NOINTERSECT;
-  // }
+  if (texture_data(triangle.material.texture_id, uv).a <
+      triangle.material.alpha_cutoff) {
+    return NOINTERSECT;
+  }
+
+  if (backfacing && triangle.material.double_sided == 0) {
+    return NOINTERSECT;
+  }
 
   return Intersection(true, backfacing, t, ray.origin + t * ray.direction,
                       normal, triangle.material, uv, 0, 0, 0, 0);
@@ -264,32 +278,77 @@ Intersection intersectScene(Ray ray) {
   return closestIntersection;
 }
 
-Ray cameraRay(vec2 uv, vec2 resolution, vec3 origin) {
-  vec3 ray_origin = vec3(0);
+Ray cameraRay(vec2 uv, vec2 resolution) {
   vec2 sensor_size = vec2(resolution.x / resolution.y, 1);
   vec3 point_on_sensor = vec3((uv - 0.5) * sensor_size, -FOCAL_LENGTH);
-  return Ray(origin, normalize(point_on_sensor - ray_origin));
+  return Ray(position, rotateY(rotateX(normalize(point_on_sensor), rotation.x),
+                               rotation.y));
 }
 
-struct NextBounce {
-  vec3 weight;
+struct Bounce {
   Ray ray;
+  vec3 weight;
 };
 
 vec3 renderRay(Ray ray) {
-  Intersection directIntersection = intersectScene(ray);
-  if (!directIntersection.happened) {
-    return vec3(0);
+  Bounce bounces[MAX_ARRAY_SIZE];
+  int bounces_length = 1;
+  bounces[0] = Bounce(ray, vec3(1.0));
+
+  vec3 accumulated = vec3(0.0);
+
+  for (int i = 0; i < MAX_BOUNCES; i++) {
+    if (bounces_length == 0) {
+      break;
+    }
+
+    bounces_length--;
+    Bounce bounce = bounces[bounces_length];
+
+    if (bounce.weight.x < WEIGHT_THRESHOLD &&
+        bounce.weight.y < WEIGHT_THRESHOLD &&
+        bounce.weight.z < WEIGHT_THRESHOLD) {
+      continue;
+    }
+
+    Intersection intersection = intersectScene(bounce.ray);
+    if (!intersection.happened) {
+      continue;
+    }
+
+    accumulated +=
+        bounce.weight *
+        //(0.1 + max(0, dot(intersection.normal, normalize(vec3(1, 1, 1))))) *
+        texture_data(intersection.material.texture_id, intersection.uv).rgb;
+
+    if (bounces_length >= MAX_ARRAY_SIZE - 1) {
+      // Can't add more bounces
+      continue;
+    }
+
+    // Reflected ray
+    vec3 reflection = reflect(bounce.ray.direction, intersection.normal);
+    bounces[bounces_length] =
+        Bounce(Ray(intersection.position + EPSILON * reflection, reflection),
+               bounce.weight * intersection.material.metallic_factor);
+    bounces_length++;
+
+    // Refracted ray
+    vec3 refraction = refract(bounce.ray.direction, intersection.normal,
+                              intersection.backfacing ? 1.0 / 1.5 : 1.5);
+    bounces[bounces_length] =
+        Bounce(Ray(intersection.position + EPSILON * refraction, refraction),
+               bounce.weight * (1.0 - intersection.material.roughness_factor));
+    bounces_length++;
   }
-  return directIntersection.backfacing ? vec3(1, 0, 0) : vec3(0, 1, 0);
+
+  return accumulated;
 }
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   vec2 uv = fragCoord.xy / iResolution.xy;
 
-  Ray ray = cameraRay(uv, iResolution.xy, vec3(0));
-  ray.origin = (MVP * vec4(ray.origin, 1)).xyz;
-  ray.direction = (MVP * vec4(ray.direction, 0)).xyz;
+  Ray ray = cameraRay(uv, iResolution.xy);
   vec3 col = renderRay(ray);
 
   fragColor = vec4(col, 1.0);
