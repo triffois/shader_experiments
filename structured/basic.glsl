@@ -47,6 +47,8 @@ struct Triangle {
   vec2 uv3;
 
   MaterialProperties material;
+  vec4 a;
+  vec4 b;
 };
 
 struct Box {
@@ -293,7 +295,7 @@ vec3 renderRay(Ray ray) {
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   vec2 uv = fragCoord.xy / iResolution.xy;
 
-  Ray ray = cameraRay(uv, iResolution.xy, vec3(0, 1, 2.0));
+  Ray ray = cameraRay(uv, iResolution.xy, vec3(0, 0.5, 2.0));
   ray = rotateAndOrbitRayY(ray, vec3(0, 0, 0), iTime);
   vec3 col = renderRay(ray);
 
