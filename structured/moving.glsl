@@ -49,6 +49,8 @@ struct Triangle {
   vec2 uv3;
 
   MaterialProperties material;
+  vec4 emissive_factor;
+  vec4 base_color_factor;
 };
 
 struct Box {

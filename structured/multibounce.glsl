@@ -1,6 +1,6 @@
 #version 430 core
 const int MAX_ARRAY_SIZE = 40;
-const int MAX_BOUNCES = 8;
+const int MAX_BOUNCES = 4;
 const float FOCAL_LENGTH = 1.0;
 const float WEIGHT_THRESHOLD = 0.001;
 const float EPSILON = 0.001;
