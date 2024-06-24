@@ -1,7 +1,7 @@
 #version 430 core
 
 const float FOCAL_LENGTH = 1.0f;
-const int MAX_ARRAY_SIZE = 10;
+const int MAX_ARRAY_SIZE = 128;
 
 out vec4 FragColor;
 in vec4 gl_FragCoord;
@@ -34,8 +34,7 @@ struct MaterialProperties {
     float alpha_cutoff;
     uint double_sided; // aka bool
 };
-MaterialProperties NOMATERIAL =
-MaterialProperties(-1, -1, 0, 0, 0, 0);
+MaterialProperties NOMATERIAL = MaterialProperties(-1, -1, 0, 0, 0, 0);
 
 struct Triangle {
     vec4 v0;
@@ -114,20 +113,18 @@ Intersection get_closer_intersection(Intersection a, Intersection b) {
 }
 
 float intersectAABB(Ray ray, int box_id) {
-    vec3 box_min = boxes[box_id].min.xyz;
-    vec3 box_max = boxes[box_id].max.xyz;
     // Special case: we're inside the box
-    if (ray.origin.x >= box_min.x && ray.origin.x <= box_max.x &&
-            ray.origin.y >= box_min.y && ray.origin.y <= box_max.y &&
-            ray.origin.z >= box_min.z && ray.origin.z <= box_max.z) {
+    if (ray.origin.x >= boxes[box_id].min.x && ray.origin.x <= boxes[box_id].max.x &&
+            ray.origin.y >= boxes[box_id].min.y && ray.origin.y <= boxes[box_id].max.y &&
+            ray.origin.z >= boxes[box_id].min.z && ray.origin.z <= boxes[box_id].max.z) {
         return 0.0;
     }
 
     vec3 inverted = 1.0 / ray.direction;
     // get distance to intersection with x of boxMin, with y of boxMin and with z of boxMin
-    vec3 intersections_with_min = (box_min - ray.origin) * inverted;
+    vec3 intersections_with_min = (boxes[box_id].min.xyz - ray.origin) * inverted;
     // same with boxMax
-    vec3 intersections_with_max = (box_max - ray.origin) * inverted;
+    vec3 intersections_with_max = (boxes[box_id].max.xyz - ray.origin) * inverted;
     // find the first intersection with x, with y and with z
     vec3 firsts = min(intersections_with_min, intersections_with_max);
     // find the second intersections
@@ -143,10 +140,8 @@ float intersectAABB(Ray ray, int box_id) {
 };
 
 Intersection intersect_triangle(Ray ray, int triangle_id) {
-    Triangle triangle = triangles[triangle_id];
-
-    vec3 edge1 = triangle.v1.xyz - triangle.v0.xyz;
-    vec3 edge2 = triangle.v2.xyz - triangle.v0.xyz;
+    vec3 edge1 = triangles[triangle_id].v1.xyz - triangles[triangle_id].v0.xyz;
+    vec3 edge2 = triangles[triangle_id].v2.xyz - triangles[triangle_id].v0.xyz;
 
     bool backfacing = false;
 
@@ -163,7 +158,7 @@ Intersection intersect_triangle(Ray ray, int triangle_id) {
     }
 
     float f = 1.0 / a;
-    vec3 s = ray.origin - triangle.v0.xyz;
+    vec3 s = ray.origin - triangles[triangle_id].v0.xyz;
     float u = f * dot(s, h);
     if (u < 0.0 || u > 1.0) {
         return NOINTERSECT;
@@ -178,16 +173,16 @@ Intersection intersect_triangle(Ray ray, int triangle_id) {
         return NOINTERSECT;
     }
 
-    vec2 uv = (1 - u - v) * triangle.uv1 + u * triangle.uv2 + v * triangle.uv3;
+    vec2 uv = (1 - u - v) * triangles[triangle_id].uv1 + u * triangles[triangle_id].uv2 + v * triangles[triangle_id].uv3;
 
-    vec4 text_data = texture_data(triangle.material.texture_id, uv);
+    vec4 text_data = texture_data(triangles[triangle_id].material.texture_id, uv);
 
-    if (text_data.a < triangle.material.alpha_cutoff) {
+    if (text_data.a < triangles[triangle_id].material.alpha_cutoff) {
         return NOINTERSECT;
     }
 
     return Intersection(true, backfacing, t, ray.origin + t * ray.direction,
-            normal, triangle.material, uv, 0, 0, 0, 0, text_data);
+            normal, triangles[triangle_id].material, uv, 0, 0, 0, 0, text_data);
 }
 
 void main() {
@@ -214,81 +209,51 @@ void main() {
             );
 
     int current_id = root_id;
-    while (true) {
-        if (i < 0) {
-            break;
-        }
-        if (i >= MAX_ARRAY_SIZE - 2) {
+    while (i >= 0) {
+        int left_id = boxes[current_id].left_id;
+        if (left_id == -1 || i >= MAX_ARRAY_SIZE - 2) {
             int triangles_start = boxes[current_id].start;
             int triangles_end = boxes[current_id].end;
 
             for (int k = triangles_start; k <= triangles_end; k++) {
                 Intersection intersection = intersect_triangle(ray_to_screen, k);
-                if (intersection.happened) {
-                    if (closer_intersection.distance == -1.0f) {
-                        closer_intersection = intersection;
-                        continue;
-                    }
-                    closer_intersection = get_closer_intersection(closer_intersection, intersection);
-                }
+                closer_intersection = get_closer_intersection(closer_intersection, intersection);
             }
             i--;
             current_id = array_of_hit_boxes[i];
             continue;
         }
 
-        int id = boxes[current_id].left_id;
-        if (id == -1) {
-            int triangles_start = boxes[current_id].start;
-            int triangles_end = boxes[current_id].end;
+        float left_distance = intersectAABB(ray_to_screen, left_id);
+        int right_id = boxes[current_id].right_id;
+        float right_distance = intersectAABB(ray_to_screen, right_id);
 
-            for (int k = triangles_start; k <= triangles_end; k++) {
-                Intersection intersection = intersect_triangle(ray_to_screen, k);
-                if (intersection.happened) {
-                    if (closer_intersection.distance == -1.0f) {
-                        closer_intersection = intersection;
-                        continue;
-                    }
-                    closer_intersection = get_closer_intersection(closer_intersection, intersection);
-                }
-            }
+        bool left_happened = left_distance != -1.0f && (left_distance < closer_intersection.distance || !closer_intersection.happened);
+        bool right_happened = right_distance != -1.0f && (right_distance < closer_intersection.distance || !closer_intersection.happened);
+
+        if (!left_happened && !right_happened) {
+            current_id = array_of_hit_boxes[i - 1];
             i--;
-            current_id = array_of_hit_boxes[i];
-            continue;
-        } else if (intersectAABB(ray_to_screen, id) != -1.0f) {
-            if (i >= MAX_ARRAY_SIZE - 3) {
-                int triangles_start = boxes[current_id].start;
-                int triangles_end = boxes[current_id].end;
-
-                for (int k = triangles_start; k <= triangles_end; k++) {
-                    Intersection intersection = intersect_triangle(ray_to_screen, k);
-                    if (intersection.happened) {
-                        if (closer_intersection.distance == -1.0f) {
-                            closer_intersection = intersection;
-                            continue;
-                        }
-                        closer_intersection = get_closer_intersection(closer_intersection, intersection);
-                    }
-                }
-                i--;
-                current_id = array_of_hit_boxes[i];
-                continue;
-            }
-            array_of_hit_boxes[i] = id;
+        } else if (!left_happened) {
+            array_of_hit_boxes[i] = right_id;
+            current_id = right_id;
+        } else if (!right_happened) {
+            array_of_hit_boxes[i] = left_id;
+            current_id = left_id;
+        } else if (right_distance < left_distance) {
+            array_of_hit_boxes[i] = left_id;
+            array_of_hit_boxes[i + 1] = right_id;
+            current_id = right_id;
+            i++;
+        } else {
+            array_of_hit_boxes[i] = right_id;
+            array_of_hit_boxes[i + 1] = left_id;
+            current_id = left_id;
             i++;
         }
-
-        id = boxes[current_id].right_id;
-        if (intersectAABB(ray_to_screen, id) != -1.0f) {
-            array_of_hit_boxes[i] = id;
-            i++;
-        }
-
-        i--;
-        current_id = array_of_hit_boxes[i];
     }
 
-    if (closer_intersection.distance == -1.0f) {
+    if (!closer_intersection.happened) {
         return;
     }
     FragColor = vec4(closer_intersection.text_data.rgb, 1.0f);
