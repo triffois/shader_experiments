@@ -1,7 +1,7 @@
 #version 430 core
 
 const float FOCAL_LENGTH = 1.0f;
-const int MAX_ARRAY_SIZE = 128;
+const int MAX_ARRAY_SIZE = 10;
 
 out vec4 FragColor;
 in vec4 gl_FragCoord;
@@ -208,8 +208,10 @@ void main() {
     int array_of_hit_boxes[MAX_ARRAY_SIZE];
     int i = 0;
 
-    int array_of_hit_leaf_boxes[MAX_ARRAY_SIZE];
-    int j = 0;
+    Intersection closer_intersection = Intersection(
+            false, false, -1.0f, vec3(0), vec3(0),
+            NOMATERIAL, vec2(0), 0, 0, 0, 0, vec4(0)
+            );
 
     int current_id = root_id;
     while (true) {
@@ -217,24 +219,63 @@ void main() {
             break;
         }
         if (i >= MAX_ARRAY_SIZE - 2) {
-            FragColor = vec4(0.9f, 0.1f, 0.1f, 1.0f);
-            return;
+            int triangles_start = boxes[current_id].start;
+            int triangles_end = boxes[current_id].end;
+
+            for (int k = triangles_start; k <= triangles_end; k++) {
+                Intersection intersection = intersect_triangle(ray_to_screen, k);
+                if (intersection.happened) {
+                    if (closer_intersection.distance == -1.0f) {
+                        closer_intersection = intersection;
+                        continue;
+                    }
+                    closer_intersection = get_closer_intersection(closer_intersection, intersection);
+                }
+            }
+            i--;
+            current_id = array_of_hit_boxes[i];
+            continue;
         }
 
         int id = boxes[current_id].left_id;
         if (id == -1) {
-            array_of_hit_leaf_boxes[j] = current_id;
-            j++;
+            int triangles_start = boxes[current_id].start;
+            int triangles_end = boxes[current_id].end;
+
+            for (int k = triangles_start; k <= triangles_end; k++) {
+                Intersection intersection = intersect_triangle(ray_to_screen, k);
+                if (intersection.happened) {
+                    if (closer_intersection.distance == -1.0f) {
+                        closer_intersection = intersection;
+                        continue;
+                    }
+                    closer_intersection = get_closer_intersection(closer_intersection, intersection);
+                }
+            }
             i--;
             current_id = array_of_hit_boxes[i];
             continue;
         } else if (intersectAABB(ray_to_screen, id) != -1.0f) {
+            if (i >= MAX_ARRAY_SIZE - 3) {
+                int triangles_start = boxes[current_id].start;
+                int triangles_end = boxes[current_id].end;
+
+                for (int k = triangles_start; k <= triangles_end; k++) {
+                    Intersection intersection = intersect_triangle(ray_to_screen, k);
+                    if (intersection.happened) {
+                        if (closer_intersection.distance == -1.0f) {
+                            closer_intersection = intersection;
+                            continue;
+                        }
+                        closer_intersection = get_closer_intersection(closer_intersection, intersection);
+                    }
+                }
+                i--;
+                current_id = array_of_hit_boxes[i];
+                continue;
+            }
             array_of_hit_boxes[i] = id;
             i++;
-            if (i >= MAX_ARRAY_SIZE - 2) {
-                FragColor = vec4(0.9f, 0.1f, 0.1f, 1.0f);
-                return;
-            }
         }
 
         id = boxes[current_id].right_id;
@@ -247,27 +288,6 @@ void main() {
         current_id = array_of_hit_boxes[i];
     }
 
-    Intersection closer_intersection = Intersection(
-            false, false, -1.0f, vec3(0), vec3(0),
-            NOMATERIAL, vec2(0), 0, 0, 0, 0, vec4(0)
-            );
-    while (j > 0) {
-        j--;
-        int box_id = array_of_hit_leaf_boxes[j];
-        int triangles_start = boxes[box_id].start;
-        int triangles_end = boxes[box_id].end;
-
-        for (int k = triangles_start; k <= triangles_end; k++) {
-            Intersection intersection = intersect_triangle(ray_to_screen, k);
-            if (intersection.happened) {
-                if (closer_intersection.distance == -1.0f) {
-                    closer_intersection = intersection;
-                    continue;
-                }
-                closer_intersection = get_closer_intersection(closer_intersection, intersection);
-            }
-        }
-    }
     if (closer_intersection.distance == -1.0f) {
         return;
     }
