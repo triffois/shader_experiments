@@ -183,7 +183,7 @@ vec3 sample_pixel(vec2 uv) {
 
   if (sphere_intersection.distance < 0.0 &&
       ground_plane_intersection.distance < 0.0) {
-    return vec3(0.0);
+    return reflection_accumulator;
   }
 
   vec3 color;

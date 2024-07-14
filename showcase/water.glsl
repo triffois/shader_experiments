@@ -363,7 +363,7 @@ vec3 renderRay(Ray ray) {
 
     Intersection intersection = intersectScene(bounce.ray, bounce.source);
     if (!intersection.happened) {
-      accumulated += bounce.weight * vec3(0.5, 0.75, 1);
+      accumulated += bounce.weight;
       continue;
     }
 

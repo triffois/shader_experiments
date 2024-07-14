@@ -271,7 +271,7 @@ vec3 renderRay(Ray ray) {
   Intersection intersection = intersectScene(ray, -1);
 
   if (!intersection.happened) {
-    return vec3(0);
+    return vec3(1);
   }
 
   return albedo(intersection);
